@@ -1,6 +1,7 @@
 /**
  * SSH Execute tool
- * Runs shell commands on remote devices via Tailscale SSH
+ * Runs shell commands on remote hosts via plain SSH.
+ * Host/port/user/identity are resolved via ~/.ssh/config inside the container.
  */
 
 import { z } from 'zod'
@@ -24,11 +25,11 @@ function toBase64Utf16Le(str) {
 export const name = 'ssh_exec';
 
 export const description =
-  'Execute a shell command on a remote device via Tailscale SSH. ' +
-  'Uses Tailscale hostnames — no manual SSH key setup required.';
+  'Execute a shell command on a remote host over plain SSH. ' +
+  'Hostname can be a SSH config alias, LAN IP, or DNS name.';
 
 export const schema = {
-  hostname: z.string().describe('Tailscale hostname of the target device (e.g. "myserver")'),
+  hostname: z.string().describe('SSH hostname or alias defined in /root/.ssh/config (e.g. "kojikk-server")'),
   command: z.string().describe('Shell command to execute on the remote device'),
   user: z
     .string()

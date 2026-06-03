@@ -7,7 +7,8 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 
 // Import tools - each exports: name, description, schema (ZodRawShape), handler
 import * as sshExec from './tools/ssh_exec.js'
-import * as tailscaleStatus from './tools/tailscale_status.js'
+import * as sshReadFile from './tools/ssh_read_file.js'
+import * as sshWriteFile from './tools/ssh_write_file.js'
 import * as fetchExternal from './tools/fetch_external.js'
 import * as gistKb from './tools/gist_kb.js'
 import * as browser from './tools/browser.js'
@@ -62,22 +63,27 @@ export function createMCPServer(env) {
   }
 
   // -------------------------------------------------------------------------
-  // SSH / Tailscale tools — require TAILSCALE_API_KEY
+  // SSH tool — uses plain ssh over LAN (no Tailscale required).
+  // Host/port/user resolved via ~/.ssh/config inside the container.
   // -------------------------------------------------------------------------
 
-  if (env.TAILSCALE_API_KEY) {
-    server.tool(sshExec.name, sshExec.description, sshExec.schema, async args => {
-      const result = await sshExec.handler(args)
-      await auditLog(sshExec.name, args, result)
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] }
-    })
+  server.tool(sshExec.name, sshExec.description, sshExec.schema, async args => {
+    const result = await sshExec.handler(args)
+    await auditLog(sshExec.name, args, result)
+    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] }
+  })
 
-    server.tool(tailscaleStatus.name, tailscaleStatus.description, tailscaleStatus.schema, async args => {
-      const result = await tailscaleStatus.handler(args, env.TAILSCALE_API_KEY)
-      await auditLog(tailscaleStatus.name, args, result)
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] }
-    })
-  }
+  server.tool(sshReadFile.name, sshReadFile.description, sshReadFile.schema, async args => {
+    const result = await sshReadFile.handler(args)
+    await auditLog(sshReadFile.name, args, result)
+    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] }
+  })
+
+  server.tool(sshWriteFile.name, sshWriteFile.description, sshWriteFile.schema, async args => {
+    const result = await sshWriteFile.handler(args)
+    await auditLog(sshWriteFile.name, args, result)
+    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] }
+  })
 
   return server
 }

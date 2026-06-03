@@ -1,8 +1,10 @@
 # Reacher
 
+> **This is a fork of [ouim-me/reacher](https://github.com/ouim-me/reacher) adapted for plain LAN SSH (no Tailscale required).** See [Fork changes](#fork-changes) below.
+
 Give Claude authenticated access to your APIs, a persistent knowledge base, a headless browser, and optionally your machines — on infrastructure you control.
 
-[![v0.1.2](https://img.shields.io/badge/version-0.1.2-blue.svg)](https://github.com/thezem/reacher/releases/tag/v0.1.2) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![Node.js](https://img.shields.io/badge/node-%3E%3D22-brightgreen)](https://nodejs.org)
+[![v0.2.1](https://img.shields.io/badge/version-0.2.1-blue.svg)](https://github.com/kojikk/reacher/releases) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![Node.js](https://img.shields.io/badge/node-%3E%3D22-brightgreen)](https://nodejs.org)
 
 <table>
   <tr>
@@ -34,7 +36,7 @@ Three APIs. One tool. New service = one line in `.env`.
 
 ## Why self-hosted?
 
-Your credentials never leave your server. When Claude calls `fetch_external`, the token injection happens server-side — Claude sees the response, never the key. When it calls `ssh_exec`, commands run through a server you own, authenticated with a key you control, over your Tailscale mesh. The whole chain is yours, not a third-party sandbox.
+Your credentials never leave your server. When Claude calls `fetch_external`, the token injection happens server-side — Claude sees the response, never the key. When it calls `ssh_exec`, commands run through a server you own, authenticated with a key you control. The whole chain is yours, not a third-party sandbox.
 
 This also means Reacher persists across conversations. Your knowledge base, your device map, your allowed domains — they're all still there next session without any re-setup.
 
@@ -44,11 +46,11 @@ This also means Reacher persists across conversations. Your knowledge base, your
 
 You don't need a VPS. Start with whatever matches where you are.
 
-| I want...                                                     | I need                      | Time    |
-| ------------------------------------------------------------- | --------------------------- | ------- |
-| Claude to call my APIs + remember things across conversations | Node.js + GitHub token      | ~5 min  |
-| + control a headless browser                                  | Above + a browser with CDP  | ~10 min |
-| + SSH into my servers and machines                            | Above + Tailscale + SSH key | ~30 min |
+| I want...                                                     | I need                     | Time    |
+| ------------------------------------------------------------- | -------------------------- | ------- |
+| Claude to call my APIs + remember things across conversations | Node.js + GitHub token     | ~5 min  |
+| + control a headless browser                                  | Above + a browser with CDP | ~10 min |
+| + SSH into my servers and machines                            | Above + SSH key            | ~30 min |
 
 **→ [Get started](docs/setup.md)**
 
@@ -56,16 +58,17 @@ You don't need a VPS. Start with whatever matches where you are.
 
 ## Tools
 
-| Tool               | What it does                                                             |
-| ------------------ | ------------------------------------------------------------------------ |
-| `fetch_external`   | Proxy HTTP requests to allowlisted domains with automatic auth injection |
-| `browser`          | Control a headless browser via CDP — scrape, click, fill forms, snapshot |
-| `gist_kb`          | Persistent private knowledge base backed by GitHub Gists                 |
-| `github_search`    | Search PRs and commits by author and date range                          |
-| `ssh_exec`         | Run shell commands on any machine in your Tailscale mesh                 |
-| `tailscale_status` | List all your devices with online/offline status and IPs                 |
+| Tool             | What it does                                                             |
+| ---------------- | ------------------------------------------------------------------------ |
+| `fetch_external` | Proxy HTTP requests to allowlisted domains with automatic auth injection |
+| `browser`        | Control a headless browser via CDP — scrape, click, fill forms, snapshot |
+| `gist_kb`        | Persistent private knowledge base backed by GitHub Gists                 |
+| `github_search`  | Search PRs and commits by author and date range                          |
+| `ssh_exec`       | Run shell commands on a remote host via plain SSH                        |
+| `ssh_read_file`  | Read a file from a remote host over SSH                                  |
+| `ssh_write_file` | Write a file to a remote host over SSH                                   |
 
-The server only registers tools you have credentials for. No `GITHUB_TOKEN` = no Gist or search tools. No `TAILSCALE_API_KEY` = no SSH tools. Start small, add more when you need it.
+The server only registers tools you have credentials for. No `GITHUB_TOKEN` = no Gist or search tools. Start small, add more when you need it.
 
 ---
 
@@ -83,6 +86,24 @@ The server only registers tools you have credentials for. No `GITHUB_TOKEN` = no
 **Already set up and want Claude to orient itself?** Drop [AGENT.MD](AGENT.MD) into your session — Claude will discover your devices, probe SSH access, and save a persistent map to your knowledge base.
 
 **Want Claude to walk you through setup interactively?** Point it at [docs/skill.md](docs/skill.md) — it's a step-by-step setup guide written for AI agents to follow with you.
+
+---
+
+## Fork changes
+
+This fork removes the Tailscale dependency and replaces it with plain SSH over LAN (or any SSH-reachable host):
+
+- **Tailscale removed**: `tailscale_status` tool and `tailscale-client` library are gone. `ssh_exec` no longer requires `TAILSCALE_API_KEY`.
+- **SSH via `~/.ssh/config`**: hosts are defined as aliases in the SSH config mounted into the container (`ssh-runtime/config`). No VPN required — works on a local network.
+- **New tools**: `ssh_read_file` and `ssh_write_file` for transferring file contents without manual base64 handling.
+- **Docker setup**: `docker-compose.yml` bind-mounts `ssh-runtime/` read-only and copies files into `/root/.ssh` with correct Unix permissions at startup (required because Windows bind-mounts don't preserve `0600`).
+
+```
+Claude Desktop ──stdio──▶ npx mcp-remote ──HTTP──▶ Reacher (Docker :3000)
+Claude Code    ──HTTP─────────────────────────────▶ Reacher         │
+                                                                     ▼ ssh
+                                                         your-server (:22)
+```
 
 ---
 
