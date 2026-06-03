@@ -58,17 +58,72 @@ You don't need a VPS. Start with whatever matches where you are.
 
 ## Tools
 
-| Tool             | What it does                                                             |
-| ---------------- | ------------------------------------------------------------------------ |
-| `fetch_external` | Proxy HTTP requests to allowlisted domains with automatic auth injection |
-| `browser`        | Control a headless browser via CDP — scrape, click, fill forms, snapshot |
-| `gist_kb`        | Persistent private knowledge base backed by GitHub Gists                 |
-| `github_search`  | Search PRs and commits by author and date range                          |
-| `ssh_exec`       | Run shell commands on a remote host via plain SSH                        |
-| `ssh_read_file`  | Read a file from a remote host over SSH                                  |
-| `ssh_write_file` | Write a file to a remote host over SSH                                   |
+**Core**
 
-The server only registers tools you have credentials for. No `GITHUB_TOKEN` = no Gist or search tools. Start small, add more when you need it.
+| Tool                | What it does                                                             |
+| ------------------- | ------------------------------------------------------------------------ |
+| `fetch_external`    | Proxy HTTP requests to allowlisted domains with automatic auth injection |
+| `browser`           | Control a headless browser via CDP — scrape, click, fill forms, snapshot |
+| `gist_kb`           | Persistent private knowledge base backed by GitHub Gists                 |
+| `github_search`     | Search PRs and commits by author and date range                          |
+| `audit_query`       | Read and filter the audit log to review past tool calls                  |
+
+**SSH — filesystem**
+
+| Tool             | What it does                                              |
+| ---------------- | --------------------------------------------------------- |
+| `ssh_exec`       | Run a shell command on a remote host                      |
+| `ssh_exec_many`  | Run the same command on multiple hosts in parallel        |
+| `ssh_read_file`  | Read a file from a remote host                            |
+| `ssh_write_file` | Write a file to a remote host                             |
+| `ssh_list_dir`   | List directory contents as structured JSON                |
+| `ssh_stat`       | Get metadata for a path (exists, size, mode, mtime, type) |
+| `ssh_grep`       | Search file contents with filters, returns match list     |
+
+**SSH — systemd**
+
+| Tool              | What it does                                                    |
+| ----------------- | --------------------------------------------------------------- |
+| `ssh_systemd`     | start/stop/restart/status/enable/disable/reload a service       |
+| `ssh_journalctl`  | Fetch journal logs with unit, time range, priority, grep filters |
+
+**SSH — monitoring**
+
+| Tool                  | What it does                                           |
+| --------------------- | ------------------------------------------------------ |
+| `ssh_resource_usage`  | CPU, RAM, swap, disk, load average snapshot            |
+| `ssh_ports`           | List listening TCP/UDP ports with process/PID          |
+| `ssh_process_list`    | List processes, sort by CPU/mem, filter by name/PID    |
+
+**SSH — Docker**
+
+| Tool                  | What it does                                                  |
+| --------------------- | ------------------------------------------------------------- |
+| `ssh_docker_ps`       | List containers with health, status, ports, uptime            |
+| `ssh_docker_logs`     | Fetch container logs (tail, since, grep)                      |
+| `ssh_docker_restart`  | Restart a container or a docker compose stack                 |
+
+**SSH — git**
+
+| Tool       | What it does                                            |
+| ---------- | ------------------------------------------------------- |
+| `ssh_git`  | status/pull/fetch/log/diff/checkout on a remote repo    |
+
+**SSH — network & transfers**
+
+| Tool                  | What it does                                                      |
+| --------------------- | ----------------------------------------------------------------- |
+| `ssh_curl`            | Make an HTTP request from the remote host's network vantage point |
+| `download_to_remote`  | Download a URL and save it directly to a remote host path         |
+
+**Local container scratch volume**
+
+| Tool             | What it does                                          |
+| ---------------- | ----------------------------------------------------- |
+| `local_fs_read`  | Read a file from the container scratch volume         |
+| `local_fs_write` | Write a file to the container scratch volume          |
+
+The server only registers tools you have credentials for. No `GITHUB_TOKEN` = no `gist_kb` or `github_search`. Start small, add more when you need it.
 
 ---
 

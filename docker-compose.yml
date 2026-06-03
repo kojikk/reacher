@@ -24,6 +24,8 @@ services:
       # entrypoint copies files into /root/.ssh with correct perms (bind-mounted
       # files from Windows do not honor unix 0600 that ssh requires).
       - ./ssh-runtime:/mnt/ssh-runtime:ro
+      # Scratch volume for local_fs_read / local_fs_write tools
+      - reacher-scratch:/data/scratch
     entrypoint:
       - sh
       - -c
@@ -35,4 +37,8 @@ services:
         chmod 700 /root/.ssh &&
         chmod 600 /root/.ssh/reacher-key /root/.ssh/config &&
         chmod 644 /root/.ssh/known_hosts &&
+        mkdir -p /data/scratch &&
         exec node index.js
+
+volumes:
+  reacher-scratch:
