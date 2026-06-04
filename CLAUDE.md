@@ -6,14 +6,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Reacher** is a self-hosted MCP (Model Context Protocol) server that gives Claude access to:
 
-- SSH execution on Tailscale devices
-- Device discovery and status
-- Authenticated HTTP proxying with per-domain token injection
+- SSH execution and full sysadmin tooling on remote hosts over plain LAN SSH (files, processes, ports, systemd, journald, Docker, git, HTTP from inside the remote network)
+- Authenticated HTTP proxying with per-domain token injection and SSRF guards
 - GitHub search (PRs and commits)
 - Persistent knowledge base (GitHub Gists)
+- A local scratch volume and a sanitized audit log
 - Headless browser control
 
-The server runs as an Express.js HTTP service with token-based auth and communicates with Claude via the MCP protocol.
+Remote hosts are reached over plain SSH — host/port/user/identity are resolved from `~/.ssh/config` inside the container (no Tailscale required). The server runs as an Express.js HTTP service with token-based auth and communicates with Claude via the MCP protocol.
 
 ## Architecture
 
@@ -27,9 +27,9 @@ The server runs as an Express.js HTTP service with token-based auth and communic
 
 ### Request Flow
 
-1. Claude sends HTTP POST to `/mcp?token=MCP_SECRET` with JSON-RPC body
-2. Express middleware validates token
-3. MCP transport creates new handler per request
+1. Claude sends HTTP POST to `/mcp` with JSON-RPC body, authenticating via `Authorization: Bearer <MCP_SECRET>` (a `?token=` query param is still accepted for backward compatibility)
+2. Express applies a rate limiter, then a constant-time token check — both run *before* the JSON body is parsed (and the body is size-limited)
+3. MCP transport creates a new handler per request
 4. Tool handler executes and returns result as JSON
 5. Response streamed back to Claude
 
@@ -46,12 +46,16 @@ export async function handler(args, allowedDomains?, env) { ... }
 
 Different tools receive different parameters:
 
-- **ssh_exec**: `handler(args)` - no env
-- **tailscale_status**: `handler(args, apiKey)` - specific API key
+- **ssh_exec** and the other SSH tools: `handler(args)` - no env
 - **fetch_external, github_search**: `handler(args, allowedDomains, env)` - whitelist + full env
 - **gist_kb, browser**: `handler(args, env)` - full env object
 
 Each tool is registered in `src/mcp-server.js` with `server.tool(...)`.
+
+Shared logic lives in `src/lib/`:
+
+- **`ssh.js`** - centralized SSH binary path, base options (`StrictHostKeyChecking=accept-new`, `IdentitiesOnly`, key path), `shellQuote()` for safe argument quoting, `validateTarget()` (rejects option-injection hostnames/users), and `ensureKey()`. All SSH tools route through these.
+- **`ssrf.js`** - `validateFetchUrl()` and `safeFetch()`: scheme + domain allowlist, private/loopback/link-local IP blocking, and manual redirect following that re-validates every hop. Used by `fetch_external`, `download_to_remote`, and `browser`.
 
 ## Development
 
@@ -79,10 +83,14 @@ npm run docker:run:prod
 Create `.env` from `.env.example`. Key vars:
 
 - **MCP_SECRET**: Token for /mcp endpoint auth (set to random string)
-- **TAILSCALE_API_KEY**: For tailscale_status tool
 - **GITHUB_TOKEN**: For gist_kb and github_search tools (needs gist scope)
 - **PROXY_ALLOWED_DOMAINS**: Comma-separated list for fetch_external (e.g. `api.github.com,api.linear.app`)
 - **FETCH_EXTERNAL_TOKEN_MAP**: JSON mapping domain → env var name (e.g. `{"api.github.com":"GITHUB_TOKEN"}`)
+- **SSH_DEFAULT_USER**: Default SSH user when none is given per-call (default `root`)
+- **SSH_KEY_PATH**: Path to the SSH identity inside the container (default `/home/node/.ssh/reacher-key`)
+- **SSH_BLOCKED_COMMANDS / SSH_ALLOWED_DIRS**: Optional command denylist / directory allowlist for ssh_exec
+- **AUDIT_ENABLED / AUDIT_LOG_PATH**: Toggle and path for the sanitized audit log
+- **DRY_RUN**: When truthy (`true/1/yes/on`), ssh_exec does not actually execute commands
 - **PORT**: HTTP port (default 3000)
 - **BROWSER_CDP_HOST/PORT**: Headless browser connection (defaults: 127.0.0.1:9222)
 
@@ -103,20 +111,18 @@ The **fetch_external** and **github_search** tools use a token injection pattern
 
 Example: If `FETCH_EXTERNAL_TOKEN_MAP={"api.github.com":"GITHUB_TOKEN"}` and `GITHUB_TOKEN=ghp_xxx`, any call to `api.github.com` gets the token injected automatically.
 
-### Domain Whitelisting
+### Domain Whitelisting & SSRF Guards
 
-Both **fetch_external** and **github_search** require the target domain to be in `PROXY_ALLOWED_DOMAINS`. This prevents the server from proxying requests to arbitrary domains. The handler checks:
+**fetch_external**, **download_to_remote**, **browser**, and **github_search** require the target domain to be in `PROXY_ALLOWED_DOMAINS`. The shared `validateFetchUrl()` in `src/lib/ssrf.js` enforces this and also rejects non-http(s) schemes and private/loopback/link-local addresses:
 
 ```javascript
-const allowedList = (allowedDomains || '')
-  .split(',')
-  .map(d => d.trim())
-  .filter(d => d)
+import { validateFetchUrl, safeFetch } from '../lib/ssrf.js'
 
-if (!allowedList.includes(hostname)) {
-  return { success: false, error: 'Domain not allowed', hostname }
-}
+const { hostname } = validateFetchUrl(url, allowedList) // throws if scheme/host disallowed
+const response = await safeFetch(url, options, allowedList, buildHeaders) // re-validates every redirect hop
 ```
+
+`safeFetch` follows redirects manually and re-checks each hop against the allowlist, and injects auth headers only for the host that owns them — so a redirect can't bounce a request (with credentials) to an internal address.
 
 ## Deployment
 
@@ -154,21 +160,23 @@ The server exposes:
 ## Key Design Decisions
 
 1. **Stateless Transports**: New MCP transport created per request. No session state stored on server.
-2. **Token Injection**: Tokens stay server-side; Claude never sees them. Configured via `FETCH_EXTERNAL_TOKEN_MAP`.
-3. **Domain Whitelisting**: Both fetch_external and github_search enforce strict domain allowlists to prevent misuse.
-4. **ES Modules Only**: No CommonJS. `"type": "module"` in package.json.
-5. **Zod Schemas**: All tool parameters validated using Zod. Descriptions appear in Claude's tool documentation.
-6. **Handler Signature Variance**: Different tools receive different env parameters to minimize exposure (least privilege principle).
+2. **Token Injection**: Tokens stay server-side; Claude never sees them. Configured via `FETCH_EXTERNAL_TOKEN_MAP`, injected per-host so redirects can't leak them.
+3. **Domain Whitelisting & SSRF Guards**: Outbound HTTP tools enforce strict domain allowlists and block private addresses, re-validating every redirect hop (`src/lib/ssrf.js`).
+4. **SSH Injection Safety**: All SSH tools shell-quote and validate arguments through `src/lib/ssh.js`; `ssh_write_file` also denies writes to sensitive paths.
+5. **ES Modules Only**: No CommonJS. `"type": "module"` in package.json.
+6. **Zod Schemas**: All tool parameters validated using Zod. Descriptions appear in Claude's tool documentation.
+7. **Handler Signature Variance**: Different tools receive different env parameters to minimize exposure (least privilege principle).
+8. **Hardened Container**: The Docker image runs as a non-root user with dropped capabilities, `no-new-privileges`, read-only source mounts, and dependencies pinned and installed with `--ignore-scripts`.
 
 ## Important Notes
 
 - The server requires `MCP_SECRET` to be set; requests without the correct token are rejected with 401.
-- Tailscale SSH must be enabled on target devices for `ssh_exec` to work: `sudo tailscale up --ssh`
+- `ssh_exec` connects over plain SSH: the target host must be reachable on the network with `sshd` running, and the host/user/key must be resolvable (via `~/.ssh/config` and the identity at `SSH_KEY_PATH`). Unknown host keys are accepted on first use (`StrictHostKeyChecking=accept-new`).
 - GitHub token needs `gist` scope for `gist_kb` tool and any other API scopes needed by `fetch_external`/`github_search`.
 - Browser tool requires `agent-browser` CLI to be installed globally and a CDP-compatible browser running (e.g. Lightpanda).
 
 ## Documentation Files
 
 - **README.md**: High-level overview, tools table, prerequisites, setup, deployment options
-- **QUICKSTART.md**: Step-by-step setup guide, credential acquisition, verification
 - **AGENT.MD**: Claude-specific guide on how to use each tool, first-time setup checklist, troubleshooting
+- **docs/**: setup, configuration, deployment, safety, extending, and the full tools reference
