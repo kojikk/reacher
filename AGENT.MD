@@ -155,8 +155,8 @@ Searches GitHub for pull requests or commits by author and date range. Returns c
 **Parameters:**
 
 - `type` - "prs" or "commits"
-- `repo` - repository in format "owner/repo" (e.g. "thezem/reacher")
-- `author` - GitHub username (e.g. "thezem")
+- `repo` - repository in format "owner/repo" (e.g. "kojikk/reacher")
+- `author` - GitHub username (e.g. "kojikk")
 - `created_after` - ISO date string (e.g. "2026-03-02") to search for items created after this date
 - `per_page` - number of results per page (default: 25, max: 100)
 
