@@ -5,9 +5,9 @@
  */
 
 import { z } from 'zod'
-import fs from 'fs'
 import { spawn } from 'child_process'
 import { config } from '../lib/config.js'
+import { SSH_BINARY, SSH_BASE_OPTS, validateTarget, ensureKey } from '../lib/ssh.js'
 
 /**
  * Encode a string as Base64-encoded UTF-16LE for PowerShell -EncodedCommand
@@ -50,6 +50,12 @@ export async function handler({ hostname, command, user, shell = 'cmd' }) {
   // ---
   // Safety checks
   // ---
+
+  // Reject hostnames/users that could be interpreted as ssh options
+  const targetError = validateTarget({ hostname, user })
+  if (targetError) {
+    return { success: false, error: targetError, hostname, user }
+  }
 
   // Check for blocked commands
   const blockedCommands = config.ssh.blocked_commands || []
@@ -100,26 +106,19 @@ export async function handler({ hostname, command, user, shell = 'cmd' }) {
     }
   }
 
-  // Verify ssh binary exists in the container
-  if (!fs.existsSync('/usr/bin/ssh')) {
+  // Verify ssh binary + key exist and the key has 0600 perms
+  if (!ensureKey()) {
     return {
       success: false,
       hostname,
       user,
       command,
       stdout: '',
-      stderr: 'SSH binary not found at /usr/bin/ssh. Ensure openssh-client is installed in the container.',
+      stderr: 'SSH binary or reacher key not found. Ensure openssh-client is installed and the key is mounted.',
       exitCode: 127,
-      error: 'ssh: command not found',
+      error: 'ssh: not available',
     }
   }
-
-  // Set proper permissions on the SSH key (SSH requires 600 for private keys)
-  fs.chmodSync('/root/.ssh/reacher-key', 0o600);
-
-  // -o StrictHostKeyChecking=no avoids interactive prompts for new Tailscale hosts
-  // -o IdentitiesOnly=yes forces use of only the specified key
-  // -i /root/.ssh/reacher-key uses the dedicated reacher key mounted via EasyPanel
 
   // Build the remote command based on shell type
   let remoteCmd = command;
@@ -131,9 +130,7 @@ export async function handler({ hostname, command, user, shell = 'cmd' }) {
 
   // Build SSH args as array to avoid local shell expansion
   const sshArgs = [
-    '-o', 'StrictHostKeyChecking=no',
-    '-o', 'IdentitiesOnly=yes',
-    '-i', '/root/.ssh/reacher-key',
+    ...SSH_BASE_OPTS,
     `${user}@${hostname}`,
     remoteCmd,
   ];
@@ -142,7 +139,7 @@ export async function handler({ hostname, command, user, shell = 'cmd' }) {
     let stdout = '';
     let stderr = '';
 
-    const proc = spawn('/usr/bin/ssh', sshArgs, {
+    const proc = spawn(SSH_BINARY, sshArgs, {
       timeout: 30_000,
       maxBuffer: 10 * 1024 * 1024, // 10 MB
     });

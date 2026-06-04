@@ -11,8 +11,8 @@ export const description = 'Search GitHub for pull requests or commits. Returns 
 
 export const schema = {
   type: z.enum(['prs', 'commits']).describe('Search type: pull requests or commits'),
-  repo: z.string().describe('Repository in format "owner/repo" (e.g. "thezem/reacher")'),
-  author: z.string().describe('GitHub username (e.g. "thezem")'),
+  repo: z.string().describe('Repository in format "owner/repo" (e.g. "kojikk/reacher")'),
+  author: z.string().describe('GitHub username (e.g. "kojikk")'),
   created_after: z.string().describe('ISO date string (e.g. "2026-03-02") - search for items created after this date'),
   per_page: z.number().int().min(1).max(100).optional().default(25).describe('Results per page (default: 25, max: 100)'),
 }
@@ -21,7 +21,12 @@ export const schema = {
  * Token injection map - loaded from FETCH_EXTERNAL_TOKEN_MAP env var (JSON string)
  * Format: {"api.github.com": "ENV_VAR_NAME"}
  */
-const TOKEN_INJECTION_MAP = JSON.parse(process.env.FETCH_EXTERNAL_TOKEN_MAP || '{}')
+let TOKEN_INJECTION_MAP = {}
+try {
+  TOKEN_INJECTION_MAP = JSON.parse(process.env.FETCH_EXTERNAL_TOKEN_MAP || '{}')
+} catch (err) {
+  console.error(`Invalid FETCH_EXTERNAL_TOKEN_MAP JSON — token injection disabled: ${err.message}`)
+}
 
 /**
  * @param {{ type: 'prs'|'commits', repo: string, author: string, created_after: string, per_page?: number }} args

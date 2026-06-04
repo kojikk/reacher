@@ -13,7 +13,7 @@ Claude Code supports local MCP servers. No public URL, no VPS, no HTTPS needed.
 ### 1. Clone and install
 
 ```bash
-git clone https://github.com/thezem/reacher.git
+git clone https://github.com/kojikk/reacher.git
 cd reacher
 npm install
 cp .env.example .env
@@ -121,7 +121,7 @@ cat ~/.ssh/reacher-key.pub >> ~/.ssh/authorized_keys
 ### 2. Clone, configure, deploy
 
 ```bash
-git clone https://github.com/thezem/reacher.git
+git clone https://github.com/kojikk/reacher.git
 cd reacher
 cp .env.example .env
 cp reacher.config.example.yaml reacher.config.yaml

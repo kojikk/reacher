@@ -11,6 +11,12 @@ services:
     env_file:
       - .env
     restart: unless-stopped
+    # Run as the unprivileged node user and lock the container down.
+    user: node
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     healthcheck:
       test: ["CMD", "node", "-e", "require('http').get('http://localhost:' + (process.env.PORT || 3000), (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"]
       interval: 30s
@@ -18,11 +24,13 @@ services:
       retries: 3
       start_period: 5s
     volumes:
-      - ./src:/app/src
-      - ./index.js:/app/index.js
+      # Code is mounted read-only so a compromised container cannot rewrite
+      # host source files (persistence / host spread).
+      - ./src:/app/src:ro
+      - ./index.js:/app/index.js:ro
       # Mount the host ssh-runtime dir read-only at a staging path;
-      # entrypoint copies files into /root/.ssh with correct perms (bind-mounted
-      # files from Windows do not honor unix 0600 that ssh requires).
+      # entrypoint copies files into the node user's ~/.ssh with correct perms
+      # (bind-mounted files from Windows do not honor the unix 0600 ssh requires).
       - ./ssh-runtime:/mnt/ssh-runtime:ro
       # Scratch volume for local_fs_read / local_fs_write tools
       - reacher-scratch:/data/scratch
@@ -30,13 +38,13 @@ services:
       - sh
       - -c
       - |
-        mkdir -p /root/.ssh &&
-        cp /mnt/ssh-runtime/reacher-key /root/.ssh/reacher-key &&
-        cp /mnt/ssh-runtime/config /root/.ssh/config &&
-        touch /root/.ssh/known_hosts &&
-        chmod 700 /root/.ssh &&
-        chmod 600 /root/.ssh/reacher-key /root/.ssh/config &&
-        chmod 644 /root/.ssh/known_hosts &&
+        mkdir -p /home/node/.ssh &&
+        cp /mnt/ssh-runtime/reacher-key /home/node/.ssh/reacher-key &&
+        cp /mnt/ssh-runtime/config /home/node/.ssh/config &&
+        touch /home/node/.ssh/known_hosts &&
+        chmod 700 /home/node/.ssh &&
+        chmod 600 /home/node/.ssh/reacher-key /home/node/.ssh/config &&
+        chmod 644 /home/node/.ssh/known_hosts &&
         mkdir -p /data/scratch &&
         exec node index.js
 

@@ -37,7 +37,7 @@ Based on their answer:
 ## Step 3: Clone and install
 
 ```bash
-git clone https://github.com/thezem/reacher.git
+git clone https://github.com/kojikk/reacher.git
 cd reacher
 npm install
 cp .env.example .env

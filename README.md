@@ -40,6 +40,16 @@ Your credentials never leave your server. When Claude calls `fetch_external`, th
 
 This also means Reacher persists across conversations. Your knowledge base, your device map, your allowed domains — they're all still there next session without any re-setup.
 
+## Security hardening
+
+Reacher is built to run on infrastructure you own, so the trust boundaries are taken seriously:
+
+- **Hardened auth** — the `/mcp` endpoint uses constant-time token comparison, a request rate limiter, and a request-body size limit; authentication runs before any body parsing.
+- **SSH injection-safe** — all SSH tools shell-quote and validate arguments through a shared helper, blocking command and argument injection.
+- **SSRF guards** — `fetch_external`, `download_to_remote`, and `browser` enforce a domain/scheme allowlist and re-validate every redirect hop, blocking private/loopback/link-local addresses.
+- **Least-privilege container** — the Docker image runs as a non-root user with dropped capabilities, `no-new-privileges`, and read-only source mounts; dependencies are pinned and installed with `--ignore-scripts`.
+- **Sanitized audit log** — tool-call logging recursively strips secrets and writes with `0600` permissions.
+
 ---
 
 ## Pick your path

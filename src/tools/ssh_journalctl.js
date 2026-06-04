@@ -4,9 +4,9 @@
  */
 
 import { z } from 'zod'
-import fs from 'fs'
 import { spawn } from 'child_process'
 import { config } from '../lib/config.js'
+import { SSH_BINARY, SSH_BASE_OPTS, shellQuote, validateTarget, ensureKey } from '../lib/ssh.js'
 
 export const name = 'ssh_journalctl'
 
@@ -69,31 +69,32 @@ function resolveTime(value) {
 }
 
 export async function handler({ hostname, user, unit, since, until, lines = 100, priority, grep }) {
+  const targetError = validateTarget({ hostname, user })
+  if (targetError) {
+    return { success: false, error: targetError, hostname, user }
+  }
+
   if (config.dry_run) {
     return { success: true, dry_run: true, hostname, user, unit, since, lines }
   }
 
-  if (!fs.existsSync('/usr/bin/ssh')) {
-    return { success: false, hostname, error: 'SSH binary not found at /usr/bin/ssh' }
+  if (!ensureKey()) {
+    return { success: false, hostname, error: 'SSH binary or reacher key not found' }
   }
 
-  fs.chmodSync('/root/.ssh/reacher-key', 0o600)
-
   const args = ['--no-pager', '--output=json-short', `-n ${lines}`]
-  if (unit) args.push(`-u '${unit}'`)
+  if (unit) args.push(`-u ${shellQuote(unit)}`)
   const sinceResolved = resolveTime(since)
-  if (sinceResolved) args.push(`--since '${sinceResolved}'`)
+  if (sinceResolved) args.push(`--since ${shellQuote(sinceResolved)}`)
   const untilResolved = resolveTime(until)
-  if (untilResolved) args.push(`--until '${untilResolved}'`)
+  if (untilResolved) args.push(`--until ${shellQuote(untilResolved)}`)
   if (priority) args.push(`-p ${priority}`)
-  if (grep) args.push(`--grep='${grep.replace(/'/g, `'\\''`)}'`)
+  if (grep) args.push(`--grep=${shellQuote(grep)}`)
 
   const remoteCmd = `journalctl ${args.join(' ')} 2>&1`
 
   const sshArgs = [
-    '-o', 'StrictHostKeyChecking=accept-new',
-    '-o', 'IdentitiesOnly=yes',
-    '-i', '/root/.ssh/reacher-key',
+    ...SSH_BASE_OPTS,
     `${user}@${hostname}`,
     remoteCmd,
   ]
@@ -102,7 +103,7 @@ export async function handler({ hostname, user, unit, since, until, lines = 100,
     let stdout = ''
     let stderr = ''
 
-    const proc = spawn('/usr/bin/ssh', sshArgs, { timeout: 30_000 })
+    const proc = spawn(SSH_BINARY, sshArgs, { timeout: 30_000 })
     proc.stdout.on('data', (d) => { stdout += d.toString() })
     proc.stderr.on('data', (d) => { stderr += d.toString() })
 

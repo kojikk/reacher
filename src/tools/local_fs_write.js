@@ -16,9 +16,31 @@ export const description =
 const SCRATCH_ROOT = '/data/scratch'
 const MAX_BYTES = 50 * 1024 * 1024 // 50 MB
 
+/**
+ * Resolve the realpath of the deepest existing ancestor of a path, so symlink
+ * components are followed even when the leaf does not yet exist.
+ */
+function realpathOfExisting(p) {
+  let current = p
+  // Walk up until we hit a path that exists on disk
+  while (!fs.existsSync(current)) {
+    const parent = path.dirname(current)
+    if (parent === current) break
+    current = parent
+  }
+  return fs.realpathSync(current)
+}
+
 function safePath(relPath) {
   const resolved = path.resolve(SCRATCH_ROOT, relPath)
   if (!resolved.startsWith(SCRATCH_ROOT + path.sep) && resolved !== SCRATCH_ROOT) {
+    throw new Error('Path escapes scratch root')
+  }
+  // Follow symlinks: the real, canonical location must still live under the
+  // real scratch root. Blocks symlinks inside scratch that point outside it.
+  const realRoot = fs.realpathSync(SCRATCH_ROOT)
+  const realResolved = realpathOfExisting(resolved)
+  if (realResolved !== realRoot && !realResolved.startsWith(realRoot + path.sep)) {
     throw new Error('Path escapes scratch root')
   }
   return resolved

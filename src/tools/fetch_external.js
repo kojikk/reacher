@@ -4,8 +4,8 @@
  */
 
 import { z } from 'zod'
-import { URL } from 'url'
 import YAML from 'js-yaml'
+import { safeFetch, validateFetchUrl } from '../lib/ssrf.js'
 
 export const name = 'fetch_external'
 
@@ -38,7 +38,12 @@ export const schema = {
  * Format: {"domain": "ENV_VAR_NAME"}
  * Example: {"api.github.com": "GITHUB_TOKEN", "mypanel.com": "EASYPANEL_TOKEN"}
  */
-const TOKEN_INJECTION_MAP = JSON.parse(process.env.FETCH_EXTERNAL_TOKEN_MAP || '{}')
+let TOKEN_INJECTION_MAP = {}
+try {
+  TOKEN_INJECTION_MAP = JSON.parse(process.env.FETCH_EXTERNAL_TOKEN_MAP || '{}')
+} catch (err) {
+  console.error(`Invalid FETCH_EXTERNAL_TOKEN_MAP JSON — token injection disabled: ${err.message}`)
+}
 
 /**
  * Extract a value from an object using dot notation
@@ -140,41 +145,23 @@ function toYAML(data) {
  */
 export async function handler({ url, method = 'GET', body, headers = {}, pick, format = 'yaml' }, allowedDomains, env) {
   try {
-    // Parse the URL and extract hostname
-    const parsedUrl = new URL(url)
-    const hostname = parsedUrl.hostname
-
-    // Check if domain is allowed
     const allowedList = (allowedDomains || '')
       .split(',')
       .map(d => d.trim())
       .filter(d => d)
 
-    if (!allowedList.includes(hostname)) {
-      return {
-        success: false,
-        error: 'Domain not allowed',
-        url,
-        hostname,
-      }
+    // Validate scheme + allowlist + private-IP before sending anything
+    let hostname
+    try {
+      ;({ hostname } = validateFetchUrl(url, allowedList))
+    } catch (err) {
+      return { success: false, error: err.message, url }
     }
 
-    // Build final headers by merging user headers and injected auth
+    // Build fetch options. Content-Type/body set here; auth is injected per-hop
+    // by safeFetch so a redirect can't leak the token to a different host.
     const finalHeaders = { ...headers }
-
-    // Check if this domain has a token to inject
-    const tokenEnvVar = TOKEN_INJECTION_MAP[hostname]
-    if (tokenEnvVar && env[tokenEnvVar]) {
-      finalHeaders['Authorization'] = `Bearer ${env[tokenEnvVar]}`
-    }
-
-    // Build fetch options
-    const fetchOptions = {
-      method,
-      headers: finalHeaders,
-    }
-
-    // Add body if provided and method supports it
+    const fetchOptions = { method, headers: finalHeaders }
     if (body && ['POST', 'PUT', 'PATCH'].includes(method)) {
       fetchOptions.body = JSON.stringify(body)
       if (!finalHeaders['Content-Type']) {
@@ -182,8 +169,17 @@ export async function handler({ url, method = 'GET', body, headers = {}, pick, f
       }
     }
 
-    // Execute the fetch
-    const response = await fetch(url, fetchOptions)
+    // Inject the auth token only for the host that owns it, on each hop
+    const buildHeaders = host => {
+      const tokenEnvVar = TOKEN_INJECTION_MAP[host]
+      if (tokenEnvVar && env[tokenEnvVar]) {
+        return { Authorization: `Bearer ${env[tokenEnvVar]}` }
+      }
+      return {}
+    }
+
+    // Execute the fetch with manual, re-validated redirects
+    const response = await safeFetch(url, fetchOptions, allowedList, buildHeaders)
 
     // Parse response body
     const contentType = response.headers.get('content-type') || ''

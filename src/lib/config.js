@@ -23,6 +23,21 @@ try {
 
 const envVars = process.env
 
+/**
+ * Normalize a boolean-ish env string. Accepts true/1/yes/on (any case) as true
+ * and false/0/no/off as false. Returns undefined for unset/unrecognized values
+ * so callers can fall back to a default.
+ * @param {string|undefined} value
+ * @returns {boolean|undefined}
+ */
+function parseBoolEnv(value) {
+  if (value == null) return undefined
+  const v = String(value).trim().toLowerCase()
+  if (['true', '1', 'yes', 'on'].includes(v)) return true
+  if (['false', '0', 'no', 'off'].includes(v)) return false
+  return undefined
+}
+
 // Build the final config object with .env always winning over YAML
 export const config = {
   ssh: {
@@ -34,10 +49,9 @@ export const config = {
       (envVars.SSH_ALLOWED_DIRS || '').split(',').filter(d => d.trim()),
   },
   audit: {
-    enabled:
-      envVars.AUDIT_ENABLED === 'false' ? false : (yamlConfig.audit?.enabled ?? true),
+    enabled: parseBoolEnv(envVars.AUDIT_ENABLED) ?? yamlConfig.audit?.enabled ?? true,
     log_path:
       envVars.AUDIT_LOG_PATH || yamlConfig.audit?.log_path || './reacher-audit.log',
   },
-  dry_run: envVars.DRY_RUN === 'true' ? true : (yamlConfig.dry_run ?? false),
+  dry_run: parseBoolEnv(envVars.DRY_RUN) ?? yamlConfig.dry_run ?? false,
 }

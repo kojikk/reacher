@@ -4,9 +4,9 @@
  */
 
 import { z } from 'zod'
-import fs from 'fs'
 import { spawn } from 'child_process'
 import { config } from '../lib/config.js'
+import { SSH_BINARY, SSH_BASE_OPTS, shellQuote, validateTarget, ensureKey } from '../lib/ssh.js'
 
 export const name = 'ssh_systemd'
 
@@ -28,31 +28,34 @@ export const schema = {
 }
 
 export async function handler({ hostname, service, action, user }) {
+  const targetError = validateTarget({ hostname, user })
+  if (targetError) {
+    return { success: false, error: targetError, hostname, user }
+  }
+
   if (config.dry_run) {
     return { success: true, dry_run: true, would_run: `systemctl ${action} ${service}`, hostname, user }
   }
 
-  if (!fs.existsSync('/usr/bin/ssh')) {
-    return { success: false, hostname, error: 'SSH binary not found at /usr/bin/ssh' }
+  if (!ensureKey()) {
+    return { success: false, hostname, error: 'SSH binary or reacher key not found' }
   }
 
-  fs.chmodSync('/root/.ssh/reacher-key', 0o600)
+  const quotedService = shellQuote(service)
 
   // For 'status' we collect structured output; for others we just run + check exit code
   let remoteCmd
   if (action === 'status') {
     remoteCmd =
-      `systemctl is-active '${service}' 2>/dev/null; ` +
-      `systemctl show '${service}' --property=ActiveState,SubState,LoadState,MainPID,MemoryCurrent,TasksCurrent,UnitFileState,ExecMainStartTimestamp 2>/dev/null; ` +
-      `journalctl -u '${service}' -n 10 --no-pager --output=short-iso 2>/dev/null`
+      `systemctl is-active ${quotedService} 2>/dev/null; ` +
+      `systemctl show ${quotedService} --property=ActiveState,SubState,LoadState,MainPID,MemoryCurrent,TasksCurrent,UnitFileState,ExecMainStartTimestamp 2>/dev/null; ` +
+      `journalctl -u ${quotedService} -n 10 --no-pager --output=short-iso 2>/dev/null`
   } else {
-    remoteCmd = `systemctl ${action} '${service}'`
+    remoteCmd = `systemctl ${action} ${quotedService}`
   }
 
   const sshArgs = [
-    '-o', 'StrictHostKeyChecking=accept-new',
-    '-o', 'IdentitiesOnly=yes',
-    '-i', '/root/.ssh/reacher-key',
+    ...SSH_BASE_OPTS,
     `${user}@${hostname}`,
     remoteCmd,
   ]
@@ -61,7 +64,7 @@ export async function handler({ hostname, service, action, user }) {
     let stdout = ''
     let stderr = ''
 
-    const proc = spawn('/usr/bin/ssh', sshArgs, { timeout: 30_000 })
+    const proc = spawn(SSH_BINARY, sshArgs, { timeout: 30_000 })
     proc.stdout.on('data', (d) => { stdout += d.toString() })
     proc.stderr.on('data', (d) => { stderr += d.toString() })
 

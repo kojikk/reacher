@@ -4,9 +4,9 @@
  */
 
 import { z } from 'zod'
-import fs from 'fs'
 import { spawn } from 'child_process'
 import { config } from '../lib/config.js'
+import { SSH_BINARY, SSH_BASE_OPTS, validateTarget, ensureKey } from '../lib/ssh.js'
 
 export const name = 'ssh_process_list'
 
@@ -46,15 +46,18 @@ export const schema = {
 }
 
 export async function handler({ hostname, user, sort_by = 'cpu', filter_name, filter_pid, limit = 50 }) {
+  const targetError = validateTarget({ hostname, user })
+  if (targetError) {
+    return { success: false, error: targetError, hostname, user }
+  }
+
   if (config.dry_run) {
     return { success: true, dry_run: true, hostname, user }
   }
 
-  if (!fs.existsSync('/usr/bin/ssh')) {
-    return { success: false, hostname, error: 'SSH binary not found at /usr/bin/ssh' }
+  if (!ensureKey()) {
+    return { success: false, hostname, error: 'SSH binary or reacher key not found' }
   }
-
-  fs.chmodSync('/root/.ssh/reacher-key', 0o600)
 
   const sortFlag = sort_by === 'mem' ? '--sort=-%mem' : sort_by === 'pid' ? '--sort=pid' : '--sort=-%cpu'
   // ps output: pid ppid user %cpu %mem vsz rss stat command
@@ -65,9 +68,7 @@ export async function handler({ hostname, user, sort_by = 'cpu', filter_name, fi
   }
 
   const sshArgs = [
-    '-o', 'StrictHostKeyChecking=accept-new',
-    '-o', 'IdentitiesOnly=yes',
-    '-i', '/root/.ssh/reacher-key',
+    ...SSH_BASE_OPTS,
     `${user}@${hostname}`,
     remoteCmd,
   ]
@@ -76,7 +77,7 @@ export async function handler({ hostname, user, sort_by = 'cpu', filter_name, fi
     let stdout = ''
     let stderr = ''
 
-    const proc = spawn('/usr/bin/ssh', sshArgs, { timeout: 15_000 })
+    const proc = spawn(SSH_BINARY, sshArgs, { timeout: 15_000 })
     proc.stdout.on('data', (d) => { stdout += d.toString() })
     proc.stderr.on('data', (d) => { stderr += d.toString() })
 

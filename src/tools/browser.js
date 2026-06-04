@@ -5,6 +5,7 @@
 
 import { z } from 'zod'
 import { spawn } from 'child_process'
+import { isPrivateIpLiteral } from '../lib/ssrf.js'
 
 export const name = 'browser'
 
@@ -61,6 +62,34 @@ function parseArgs(cmd) {
 }
 
 /**
+ * Validate any URL-looking arguments in the command. Only http(s) is allowed,
+ * and the host must not be a private/loopback/link-local literal. This blocks
+ * file://, chrome://, and SSRF-style navigation to internal addresses.
+ * @param {string[]} cmdArgs
+ * @returns {string|null} an error message, or null if all args are safe
+ */
+function validateUrlArgs(cmdArgs) {
+  for (const arg of cmdArgs) {
+    // Heuristic: only inspect args that look like a scheme://… or bare host URL
+    if (!/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(arg)) continue
+
+    let url
+    try {
+      url = new URL(arg)
+    } catch {
+      return `Invalid URL: ${arg}`
+    }
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+      return `Scheme not allowed: ${url.protocol}`
+    }
+    if (isPrivateIpLiteral(url.hostname)) {
+      return `Host resolves to a private/reserved address: ${url.hostname}`
+    }
+  }
+  return null
+}
+
+/**
  * @param {{ command: string }} args
  * @param {NodeJS.ProcessEnv} env
  */
@@ -69,6 +98,19 @@ export async function handler({ command }, env = process.env) {
   const port = env.BROWSER_CDP_PORT ?? '9222'
 
   const cmdArgs = parseArgs(command)
+
+  const urlError = validateUrlArgs(cmdArgs)
+  if (urlError) {
+    return {
+      success: false,
+      command,
+      stdout: '',
+      stderr: urlError,
+      exitCode: 1,
+      error: urlError,
+    }
+  }
+
   const spawnArgs = ['--cdp', `ws://${host}:${port}`, ...cmdArgs]
 
   return new Promise(resolve => {

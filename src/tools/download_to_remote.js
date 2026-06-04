@@ -8,6 +8,7 @@
 import { z } from 'zod'
 import { config } from '../lib/config.js'
 import { handler as writeHandler } from './ssh_write_file.js'
+import { safeFetch, validateFetchUrl } from '../lib/ssrf.js'
 
 export const name = 'download_to_remote'
 
@@ -42,23 +43,18 @@ export async function handler({ url, hostname, remote_path, user, mkdir_parents 
     return { success: true, dry_run: true, would_fetch: url, would_write: remote_path, hostname, user }
   }
 
-  // Domain allowlist check (same logic as fetch_external)
-  let hostname_url
-  try {
-    hostname_url = new URL(url).hostname
-  } catch {
-    return { success: false, error: 'Invalid URL', url }
-  }
-
+  // Scheme + domain allowlist + private-IP check (same guard as fetch_external)
   const allowedList = (allowedDomains || '').split(',').map((d) => d.trim()).filter((d) => d)
-  if (!allowedList.includes(hostname_url)) {
-    return { success: false, error: 'Domain not allowed', hostname: hostname_url, allowed: allowedList }
+  try {
+    validateFetchUrl(url, allowedList)
+  } catch (err) {
+    return { success: false, error: err.message, url, allowed: allowedList }
   }
 
-  // Fetch the URL server-side
+  // Fetch the URL server-side with manual, re-validated redirects
   let response
   try {
-    response = await fetch(url)
+    response = await safeFetch(url, {}, allowedList)
   } catch (err) {
     return { success: false, step: 'fetch', url, error: err.message }
   }

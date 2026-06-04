@@ -6,10 +6,60 @@
  */
 
 import 'dotenv/config'
+import crypto from 'node:crypto'
 import express from 'express'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { createMCPServer } from './src/mcp-server.js'
 import { config } from './src/lib/config.js'
+
+// ---------------------------------------------------------------------------
+// Auth helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Constant-time comparison of a candidate token against the secret.
+ * Avoids a timing side channel and length-leak (hashing equalizes length).
+ */
+function tokenMatches(candidate, secret) {
+  if (typeof candidate !== 'string' || typeof secret !== 'string') return false
+  const a = crypto.createHash('sha256').update(candidate).digest()
+  const b = crypto.createHash('sha256').update(secret).digest()
+  return crypto.timingSafeEqual(a, b)
+}
+
+/**
+ * Extract the bearer token from the Authorization header (preferred) or, for
+ * backward compatibility with existing connector configs, the `token` query param.
+ */
+function extractToken(req) {
+  const auth = req.headers['authorization']
+  if (auth && auth.startsWith('Bearer ')) {
+    return auth.slice('Bearer '.length).trim()
+  }
+  return typeof req.query.token === 'string' ? req.query.token : undefined
+}
+
+/**
+ * Minimal in-memory fixed-window rate limiter keyed by client IP. Avoids adding
+ * a dependency. Intended as a brute-force speed bump, not a DDoS defense.
+ */
+function createRateLimiter({ windowMs, max }) {
+  const hits = new Map()
+  return function rateLimit(req, res, next) {
+    const now = Date.now()
+    const ip = req.ip || req.socket?.remoteAddress || 'unknown'
+    const entry = hits.get(ip)
+    if (!entry || now > entry.reset) {
+      hits.set(ip, { count: 1, reset: now + windowMs })
+      return next()
+    }
+    entry.count += 1
+    if (entry.count > max) {
+      return res.status(429).json({ error: 'Too many requests' })
+    }
+    next()
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Environment validation
@@ -49,21 +99,13 @@ async function main() {
   const mcpServer = createMCPServer(process.env)
 
   const app = express()
-  app.use(express.json())
+  // Trust the reverse proxy so req.ip reflects the real client for rate limiting
+  app.set('trust proxy', true)
 
-  // Token-based authentication middleware
-  app.use((req, res, next) => {
-    const secret = process.env.MCP_SECRET
-    const token = req.query.token
+  // Rate-limit before any auth/body parsing to blunt brute-force attempts
+  const rateLimit = createRateLimiter({ windowMs: 60_000, max: 60 })
 
-    if (!token || token !== secret) {
-      return res.status(401).json({ error: 'Unauthorized' })
-    }
-
-    next()
-  })
-
-  // Health check
+  // Health check is unauthenticated and must not require a body
   app.get('/health', (_req, res) => {
     res.json({
       status: 'ok',
@@ -72,8 +114,18 @@ async function main() {
     })
   })
 
+  // Authenticate (rate-limit → token check) BEFORE parsing the request body so
+  // unauthenticated callers can't reach the JSON parser or be brute-forced cheaply.
+  const authenticate = (req, res, next) => {
+    const token = extractToken(req)
+    if (!token || !tokenMatches(token, process.env.MCP_SECRET)) {
+      return res.status(401).json({ error: 'Unauthorized' })
+    }
+    next()
+  }
+
   // MCP endpoint - a fresh transport is created per request (stateless / no sessions)
-  app.post('/mcp', async (req, res) => {
+  app.post('/mcp', rateLimit, authenticate, express.json({ limit: '1mb' }), async (req, res) => {
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
       enableJsonResponse: true,

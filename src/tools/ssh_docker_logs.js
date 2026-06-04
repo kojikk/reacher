@@ -4,9 +4,9 @@
  */
 
 import { z } from 'zod'
-import fs from 'fs'
 import { spawn } from 'child_process'
 import { config } from '../lib/config.js'
+import { SSH_BINARY, SSH_BASE_OPTS, shellQuote, validateTarget, ensureKey } from '../lib/ssh.js'
 
 export const name = 'ssh_docker_logs'
 
@@ -52,30 +52,31 @@ function resolveDockerSince(value) {
 }
 
 export async function handler({ hostname, container, user, tail = 100, since, grep, timestamps = true }) {
+  const targetError = validateTarget({ hostname, user })
+  if (targetError) {
+    return { success: false, error: targetError, hostname, user }
+  }
+
   if (config.dry_run) {
     return { success: true, dry_run: true, hostname, user, container }
   }
 
-  if (!fs.existsSync('/usr/bin/ssh')) {
-    return { success: false, hostname, error: 'SSH binary not found at /usr/bin/ssh' }
+  if (!ensureKey()) {
+    return { success: false, hostname, error: 'SSH binary or reacher key not found' }
   }
-
-  fs.chmodSync('/root/.ssh/reacher-key', 0o600)
 
   const args = [`--tail=${tail}`]
   if (timestamps) args.push('--timestamps')
   const sinceParsed = resolveDockerSince(since)
-  if (sinceParsed) args.push(`--since='${sinceParsed}'`)
+  if (sinceParsed) args.push(`--since=${shellQuote(sinceParsed)}`)
 
-  let remoteCmd = `docker logs ${args.join(' ')} '${container}' 2>&1`
+  let remoteCmd = `docker logs ${args.join(' ')} ${shellQuote(container)} 2>&1`
   if (grep) {
-    remoteCmd += ` | grep '${grep.replace(/'/g, `'\\''`)}'`
+    remoteCmd += ` | grep ${shellQuote(grep)}`
   }
 
   const sshArgs = [
-    '-o', 'StrictHostKeyChecking=accept-new',
-    '-o', 'IdentitiesOnly=yes',
-    '-i', '/root/.ssh/reacher-key',
+    ...SSH_BASE_OPTS,
     `${user}@${hostname}`,
     remoteCmd,
   ]
@@ -84,7 +85,7 @@ export async function handler({ hostname, container, user, tail = 100, since, gr
     let stdout = ''
     let stderr = ''
 
-    const proc = spawn('/usr/bin/ssh', sshArgs, { timeout: 30_000 })
+    const proc = spawn(SSH_BINARY, sshArgs, { timeout: 30_000 })
     proc.stdout.on('data', (d) => { stdout += d.toString() })
     proc.stderr.on('data', (d) => { stderr += d.toString() })
 

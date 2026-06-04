@@ -4,9 +4,9 @@
  */
 
 import { z } from 'zod'
-import fs from 'fs'
 import { spawn } from 'child_process'
 import { config } from '../lib/config.js'
+import { SSH_BINARY, SSH_BASE_OPTS, shellQuote, validateTarget, ensureKey } from '../lib/ssh.js'
 
 export const name = 'ssh_docker_restart'
 
@@ -48,25 +48,26 @@ export async function handler({ hostname, user, container, compose_file, service
     return { success: true, dry_run: true, would_run: what.trim(), hostname, user }
   }
 
-  if (!fs.existsSync('/usr/bin/ssh')) {
-    return { success: false, hostname, error: 'SSH binary not found at /usr/bin/ssh' }
+  const targetError = validateTarget({ hostname, user })
+  if (targetError) {
+    return { success: false, error: targetError, hostname, user }
   }
 
-  fs.chmodSync('/root/.ssh/reacher-key', 0o600)
+  if (!ensureKey()) {
+    return { success: false, hostname, error: 'SSH binary or reacher key not found' }
+  }
 
   let remoteCmd
   if (compose_file) {
-    const quotedFile = `'${compose_file.replace(/'/g, `'\\''`)}'`
-    const svcArg = service ? ` '${service}'` : ''
+    const quotedFile = shellQuote(compose_file)
+    const svcArg = service ? ` ${shellQuote(service)}` : ''
     remoteCmd = `docker compose -f ${quotedFile} restart${svcArg} 2>&1`
   } else {
-    remoteCmd = `docker restart '${container}' 2>&1`
+    remoteCmd = `docker restart ${shellQuote(container)} 2>&1`
   }
 
   const sshArgs = [
-    '-o', 'StrictHostKeyChecking=accept-new',
-    '-o', 'IdentitiesOnly=yes',
-    '-i', '/root/.ssh/reacher-key',
+    ...SSH_BASE_OPTS,
     `${user}@${hostname}`,
     remoteCmd,
   ]
@@ -75,7 +76,7 @@ export async function handler({ hostname, user, container, compose_file, service
     let stdout = ''
     let stderr = ''
 
-    const proc = spawn('/usr/bin/ssh', sshArgs, { timeout: 60_000 })
+    const proc = spawn(SSH_BINARY, sshArgs, { timeout: 60_000 })
     proc.stdout.on('data', (d) => { stdout += d.toString() })
     proc.stderr.on('data', (d) => { stderr += d.toString() })
 

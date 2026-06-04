@@ -4,9 +4,9 @@
  */
 
 import { z } from 'zod'
-import fs from 'fs'
 import { spawn } from 'child_process'
 import { config } from '../lib/config.js'
+import { SSH_BINARY, SSH_BASE_OPTS, validateTarget, ensureKey } from '../lib/ssh.js'
 
 export const name = 'ssh_exec_many'
 
@@ -29,14 +29,13 @@ export const schema = {
 
 function runOne(hostname, command, user) {
   return new Promise((resolve) => {
-    if (!fs.existsSync('/usr/bin/ssh')) {
-      return resolve({ hostname, success: false, error: 'SSH binary not found', stdout: '', stderr: '', exitCode: 127 })
+    const targetError = validateTarget({ hostname, user })
+    if (targetError) {
+      return resolve({ hostname, success: false, error: targetError, stdout: '', stderr: '', exitCode: 1 })
     }
 
     const sshArgs = [
-      '-o', 'StrictHostKeyChecking=accept-new',
-      '-o', 'IdentitiesOnly=yes',
-      '-i', '/root/.ssh/reacher-key',
+      ...SSH_BASE_OPTS,
       `${user}@${hostname}`,
       command,
     ]
@@ -44,7 +43,7 @@ function runOne(hostname, command, user) {
     let stdout = ''
     let stderr = ''
 
-    const proc = spawn('/usr/bin/ssh', sshArgs, { timeout: 30_000 })
+    const proc = spawn(SSH_BINARY, sshArgs, { timeout: 30_000 })
     proc.stdout.on('data', (d) => { stdout += d.toString() })
     proc.stderr.on('data', (d) => { stderr += d.toString() })
 
@@ -89,7 +88,9 @@ export async function handler({ hostnames, command, user }) {
     }
   }
 
-  fs.chmodSync('/root/.ssh/reacher-key', 0o600)
+  if (!ensureKey()) {
+    return { success: false, error: 'SSH binary or reacher key not found', command, user }
+  }
 
   const results = await Promise.all(hostnames.map((h) => runOne(h, command, user)))
 

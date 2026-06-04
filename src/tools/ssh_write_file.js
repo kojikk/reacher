@@ -6,11 +6,27 @@
  */
 
 import { z } from 'zod'
-import fs from 'fs'
 import { spawn } from 'child_process'
 import { config } from '../lib/config.js'
+import { SSH_BINARY, SSH_BASE_OPTS, shellQuote, validateTarget, ensureKey } from '../lib/ssh.js'
 
 const DEFAULT_MAX_BYTES = 10 * 1024 * 1024
+
+// Paths that grant persistence/backdoors if attacker-writable. Writing here is
+// refused regardless of allowed_dirs — defense in depth for a powerful tool.
+const SENSITIVE_PATH_PATTERNS = [
+  /(^|\/)\.ssh(\/|$)/,           // ~/.ssh/authorized_keys, known_hosts, keys
+  /(^|\/)authorized_keys$/,
+  /^\/etc(\/|$)/,                // system config, /etc/passwd, sudoers, cron
+  /^\/root(\/|$)/,               // root's home
+  /(^|\/)crontab$/,
+  /^\/var\/spool\/cron(\/|$)/,
+  /^\/usr(\/|$)/,                // system binaries
+  /^\/bin(\/|$)/,
+  /^\/sbin(\/|$)/,
+  /^\/boot(\/|$)/,
+  /(^|\/)\.bashrc$|(^|\/)\.bash_profile$|(^|\/)\.profile$/, // shell init -> code exec on login
+]
 
 export const name = 'ssh_write_file'
 
@@ -53,6 +69,18 @@ export const schema = {
 export async function handler({
   hostname, path, content, encoding = 'utf8', mode, mkdir_parents = false, user,
 }) {
+  const targetError = validateTarget({ hostname, user })
+  if (targetError) {
+    return { success: false, error: targetError, hostname, user }
+  }
+
+  // Safety: refuse writes to sensitive system/credential paths (backdoor vectors)
+  for (const pattern of SENSITIVE_PATH_PATTERNS) {
+    if (pattern.test(path)) {
+      return { success: false, blocked: true, reason: 'Write to sensitive path is not allowed', hostname, path }
+    }
+  }
+
   // Safety: respect ssh_exec's blocked_commands list for the path itself
   const blocked = config.ssh.blocked_commands || []
   for (const rule of blocked) {
@@ -78,13 +106,11 @@ export async function handler({
     return { success: true, dry_run: true, would_write: path, hostname, user, bytes: bytes.length }
   }
 
-  if (!fs.existsSync('/usr/bin/ssh')) {
-    return { success: false, hostname, path, error: 'SSH binary not found at /usr/bin/ssh' }
+  if (!ensureKey()) {
+    return { success: false, hostname, path, error: 'SSH binary or reacher key not found' }
   }
 
-  fs.chmodSync('/root/.ssh/reacher-key', 0o600)
-
-  const quotedPath = `'${path.replace(/'/g, `'\\''`)}'`
+  const quotedPath = shellQuote(path)
   const mkdir = mkdir_parents ? `mkdir -p "$(dirname ${quotedPath})" && ` : ''
   const chmod = mode ? ` && chmod ${mode} ${quotedPath}` : ''
 
@@ -93,9 +119,7 @@ export async function handler({
   const remoteCmd = `set -e; ${mkdir}base64 -d > ${quotedPath}${chmod}`
 
   const sshArgs = [
-    '-o', 'StrictHostKeyChecking=accept-new',
-    '-o', 'IdentitiesOnly=yes',
-    '-i', '/root/.ssh/reacher-key',
+    ...SSH_BASE_OPTS,
     `${user}@${hostname}`,
     remoteCmd,
   ]
@@ -104,7 +128,7 @@ export async function handler({
     let stderr = ''
     let stdout = ''
 
-    const proc = spawn('/usr/bin/ssh', sshArgs, {
+    const proc = spawn(SSH_BINARY, sshArgs, {
       timeout: 60_000,
       maxBuffer: 1024 * 1024,
     })
