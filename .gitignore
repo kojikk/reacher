@@ -32,3 +32,11 @@ Thumbs.db
 .cache/
 temp/
 tmp/
+
+# Claude / agent working files
+.claude/
+NOTES.md
+SECURITY_AUDIT.md
+
+# SSH runtime (may contain keys)
+ssh-runtime/
