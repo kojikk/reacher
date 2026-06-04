@@ -12,12 +12,21 @@ export const SSH_KEY_PATH = process.env.SSH_KEY_PATH || '/home/node/.ssh/reacher
 
 export const SSH_BINARY = '/usr/bin/ssh'
 
+// Persist pinned host keys next to the identity key. The container runs as the
+// unprivileged `node` user whose $HOME may resolve to /root, so ssh would
+// otherwise fail to write known_hosts; pinning it here keeps host-key
+// verification working across restarts.
+export const SSH_KNOWN_HOSTS_PATH =
+  process.env.SSH_KNOWN_HOSTS_PATH ||
+  SSH_KEY_PATH.replace(/[^/\\]*$/, 'known_hosts')
+
 // StrictHostKeyChecking=accept-new pins a host's key on first use and then
 // rejects mismatches (MITM protection) without an interactive prompt.
 // IdentitiesOnly=yes forces use of only the specified key.
 export const SSH_BASE_OPTS = [
   '-o', 'StrictHostKeyChecking=accept-new',
   '-o', 'IdentitiesOnly=yes',
+  '-o', `UserKnownHostsFile=${SSH_KNOWN_HOSTS_PATH}`,
   '-i', SSH_KEY_PATH,
 ]
 
