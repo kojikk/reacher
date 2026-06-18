@@ -5,20 +5,32 @@
  */
 
 import fs from 'fs'
+import os from 'os'
+
+const isWindows = os.platform() === 'win32'
 
 // The container runs as the unprivileged `node` user (see Dockerfile), so the
 // dedicated key lives under that user's home. Overridable for other layouts.
-export const SSH_KEY_PATH = process.env.SSH_KEY_PATH || '/home/node/.ssh/reacher-key'
+const DEFAULT_KEY_PATH = isWindows
+  ? String.raw`C:\Projects\reacher\ssh-runtime\reacher-key`
+  : '/home/node/.ssh/reacher-key'
 
-export const SSH_BINARY = '/usr/bin/ssh'
+export const SSH_KEY_PATH = process.env.SSH_KEY_PATH || DEFAULT_KEY_PATH
 
-// Persist pinned host keys next to the identity key. The container runs as the
-// unprivileged `node` user whose $HOME may resolve to /root, so ssh would
-// otherwise fail to write known_hosts; pinning it here keeps host-key
-// verification working across restarts.
+// On Windows use the built-in OpenSSH client; on Linux use the system ssh.
+const DEFAULT_SSH_BINARY = isWindows
+  ? String.raw`C:\Windows\System32\OpenSSH\ssh.exe`
+  : '/usr/bin/ssh'
+
+export const SSH_BINARY = process.env.SSH_BINARY || DEFAULT_SSH_BINARY
+
+// Persist pinned host keys next to the identity key.
 export const SSH_KNOWN_HOSTS_PATH =
   process.env.SSH_KNOWN_HOSTS_PATH ||
   SSH_KEY_PATH.replace(/[^/\\]*$/, 'known_hosts')
+
+// Optional path to a custom ssh config file (e.g. ssh-runtime/config on bare Node).
+const SSH_CONFIG_FILE = process.env.SSH_CONFIG_FILE || null
 
 // StrictHostKeyChecking=accept-new pins a host's key on first use and then
 // rejects mismatches (MITM protection) without an interactive prompt.
@@ -28,6 +40,7 @@ export const SSH_BASE_OPTS = [
   '-o', 'IdentitiesOnly=yes',
   '-o', `UserKnownHostsFile=${SSH_KNOWN_HOSTS_PATH}`,
   '-i', SSH_KEY_PATH,
+  ...(SSH_CONFIG_FILE ? ['-F', SSH_CONFIG_FILE] : []),
 ]
 
 /**
@@ -72,6 +85,7 @@ export function validateTarget({ hostname, user }) {
 export function ensureKey() {
   if (!fs.existsSync(SSH_BINARY)) return false
   if (!fs.existsSync(SSH_KEY_PATH)) return false
-  fs.chmodSync(SSH_KEY_PATH, 0o600)
+  // chmodSync is a no-op on Windows; ACLs are set by ssh-keygen at key creation time.
+  if (!isWindows) fs.chmodSync(SSH_KEY_PATH, 0o600)
   return true
 }
