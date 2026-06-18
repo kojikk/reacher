@@ -5,7 +5,7 @@
 
 import { z } from 'zod'
 import { spawn } from 'child_process'
-import { config } from '../lib/config.js'
+import { config, isCommandBlocked } from '../lib/config.js'
 import { SSH_BINARY, SSH_BASE_OPTS, validateTarget, ensureKey } from '../lib/ssh.js'
 
 export const name = 'ssh_exec_many'
@@ -77,7 +77,7 @@ export async function handler({ hostnames, command, user }) {
   // Safety check: blocked commands
   const blockedCommands = config.ssh?.blocked_commands || []
   for (const blocked of blockedCommands) {
-    if (command.toLowerCase().includes(blocked.toLowerCase())) {
+    if (isCommandBlocked(command, blocked)) {
       return {
         success: false,
         blocked: true,

@@ -38,6 +38,25 @@ function parseBoolEnv(value) {
   return undefined
 }
 
+/**
+ * Check whether a command string matches a blocked-command rule.
+ * Single-word rules (no whitespace) use whole-word matching so that e.g. the
+ * rule "dd" does not fire on "caddy", "address", etc.
+ * Multi-word rules (e.g. "rm -rf /") fall back to substring matching.
+ * @param {string} command
+ * @param {string} blocked
+ * @returns {boolean}
+ */
+export function isCommandBlocked(command, blocked) {
+  const blk = blocked.toLowerCase().trim()
+  if (!blk) return false
+  const escaped = blk.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  if (/\s/.test(blk)) {
+    return command.toLowerCase().includes(blk)
+  }
+  return new RegExp('\\b' + escaped + '\\b', 'i').test(command)
+}
+
 // Build the final config object with .env always winning over YAML
 export const config = {
   ssh: {
